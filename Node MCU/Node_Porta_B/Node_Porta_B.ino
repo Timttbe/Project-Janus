@@ -2,7 +2,7 @@
 #include <WiFiUdp.h>
 
 // ====================== CONFIGURAÇÕES ======================
-#define DEVICE_NAME "PORTA_B"  // 👉 altere para "PORTA_B" ou "PORTEIRO"
+#define DEVICE_NAME "PORTA_B"  // 👉 altere para "PORTA_A", "PORTA_B" ou "PORTEIRO"
 const char* ssid = "Evosystems&Wires Visitante";
 const char* password = "Wifi2025";
 
@@ -27,9 +27,15 @@ bool bypassMode = false;
 bool portaAberta = false;
 unsigned long relayStart = 0;
 bool relayAtivo = false;
-bool discoveryDone = false;
 unsigned long lastDiscovery = 0;
 unsigned long lastPingSent = 0;
+unsigned long lastStatusSent = 0;
+
+// Estado das outras portas (recebido via rede)
+bool portaAAberta = false;
+bool portaBAberta = false;
+unsigned long lastStatusPortaA = 0;
+unsigned long lastStatusPortaB = 0;
 
 // ===================== FUNÇÕES =============================
 void sendBroadcast(const String& msg) {
@@ -44,8 +50,54 @@ void sendStatus() {
   sendBroadcast("STATUS|" + String(DEVICE_NAME) + "|" + estado);
 }
 
+bool podeAbrir(const String& portaAlvo) {
+  // Se bypass está ativo, pode abrir sempre
+  if (bypassMode) {
+    Serial.println("✅ Bypass ativo, abrindo sem verificar intertravamento");
+    return true;
+  }
+
+  // Verifica intertravamento: só pode abrir se a OUTRA porta estiver fechada
+  if (portaAlvo == "PORTA_A") {
+    // Verifica se recebeu status da PORTA_B recentemente
+    if (millis() - lastStatusPortaB > 10000 && lastStatusPortaB > 0) {
+      Serial.println("⚠️ Sem comunicação com PORTA_B! Bloqueando por segurança.");
+      return false;
+    }
+    
+    if (portaBAberta) {
+      Serial.println("🚫 PORTA_B está aberta! Não pode abrir PORTA_A.");
+      Serial.println("   Estado PORTA_B: " + String(portaBAberta ? "ABERTA" : "FECHADA"));
+      return false;
+    }
+    Serial.println("✅ PORTA_B está fechada, pode abrir PORTA_A");
+  } 
+  else if (portaAlvo == "PORTA_B") {
+    // Verifica se recebeu status da PORTA_A recentemente
+    if (millis() - lastStatusPortaA > 10000 && lastStatusPortaA > 0) {
+      Serial.println("⚠️ Sem comunicação com PORTA_A! Bloqueando por segurança.");
+      return false;
+    }
+    
+    if (portaAAberta) {
+      Serial.println("🚫 PORTA_A está aberta! Não pode abrir PORTA_B.");
+      Serial.println("   Estado PORTA_A: " + String(portaAAberta ? "ABERTA" : "FECHADA"));
+      return false;
+    }
+    Serial.println("✅ PORTA_A está fechada, pode abrir PORTA_B");
+  }
+
+  return true;
+}
+
 void abrirPorta() {
   if (relayAtivo) return;
+  
+  // Verifica se ESTA porta pode abrir (olhando o estado da OUTRA)
+  if (!podeAbrir(String(DEVICE_NAME))) {
+    return;
+  }
+
   Serial.println("🔓 Porta abrindo...");
   digitalWrite(RELAY_PIN, HIGH);
   digitalWrite(PUPE_PIN, HIGH);
@@ -127,11 +179,8 @@ void processMessage(const String& msg) {
 
   else if (msg.startsWith("OPEN|")) {
     String target = msg.substring(5);
+    Serial.println("[OPEN recebido] Target: " + target + " | Meu nome: " + String(DEVICE_NAME));
     if (target == DEVICE_NAME) {
-      if (!bypassMode && portaAberta) {
-        Serial.println("🚫 Intertravamento ativo, não pode abrir!");
-        return;
-      }
       abrirPorta();
     }
   }
@@ -142,7 +191,25 @@ void processMessage(const String& msg) {
   }
 
   else if (msg.startsWith("STATUS|")) {
-    Serial.println("[STATUS recebido] " + msg);
+    int i1 = msg.indexOf('|') + 1;
+    int i2 = msg.indexOf('|', i1);
+    String dev = msg.substring(i1, i2);
+    String estado = msg.substring(i2 + 1);
+    
+    // Atualiza o estado das outras portas
+    if (dev == "PORTA_A") {
+      bool estadoAnterior = portaAAberta;
+      portaAAberta = (estado == "OPEN");
+      lastStatusPortaA = millis();
+      Serial.println("[STATUS] PORTA_A: " + estado + 
+                     (estadoAnterior != portaAAberta ? " (MUDOU!)" : ""));
+    } else if (dev == "PORTA_B") {
+      bool estadoAnterior = portaBAberta;
+      portaBAberta = (estado == "OPEN");
+      lastStatusPortaB = millis();
+      Serial.println("[STATUS] PORTA_B: " + estado + 
+                     (estadoAnterior != portaBAberta ? " (MUDOU!)" : ""));
+    }
   }
 }
 
@@ -168,6 +235,7 @@ void setup() {
   Serial.println("\n✅ WiFi conectado!");
   localIP = WiFi.localIP();
   Serial.println("IP: " + localIP.toString());
+  Serial.println("Device: " + String(DEVICE_NAME));
 
   udp.begin(UDP_PORT);
   sendBroadcast("DISCOVERY|" + String(DEVICE_NAME) + "|" + localIP.toString());
@@ -184,8 +252,8 @@ void loop() {
     processMessage(String(buffer));
   }
 
-  // Envia broadcast de descoberta até todos confirmarem
-  if (!discoveryDone && millis() - lastDiscovery > 2000) {
+  // SEMPRE envia broadcast de descoberta a cada 5s (não para nunca!)
+  if (millis() - lastDiscovery > 5000) {
     sendBroadcast("DISCOVERY|" + String(DEVICE_NAME) + "|" + localIP.toString());
     lastDiscovery = millis();
   }
@@ -196,48 +264,105 @@ void loop() {
     lastPingSent = millis();
   }
 
+  // Envia STATUS a cada 3s (para manter todos sincronizados)
+  if (millis() - lastStatusSent > 3000) {
+    sendStatus();
+    lastStatusSent = millis();
+    
+    // Debug: mostra estado atual
+    Serial.println("--- DEBUG Estado Atual ---");
+    Serial.println("Minha porta: " + String(portaAberta ? "ABERTA" : "FECHADA"));
+    Serial.println("PORTA_A: " + String(portaAAberta ? "ABERTA" : "FECHADA") + 
+                   " (última atualização: " + String(millis() - lastStatusPortaA) + "ms)");
+    Serial.println("PORTA_B: " + String(portaBAberta ? "ABERTA" : "FECHADA") + 
+                   " (última atualização: " + String(millis() - lastStatusPortaB) + "ms)");
+    Serial.println("Bypass: " + String(bypassMode ? "ON" : "OFF"));
+    Serial.println("Relay ativo: " + String(relayAtivo ? "SIM" : "NÃO"));
+    Serial.println("-------------------------");
+  }
+
   // Remove dispositivos inativos (sem PONG há 30s)
   for (int i = 0; i < 5; i++) {
     if (knownNames[i] != "" && millis() - lastPing[i] > 30000) {
       Serial.println("⚠️ Dispositivo inativo removido: " + knownNames[i]);
       knownNames[i] = "";
       knownIPs[i] = "";
-      discoveryDone = false; // força reativação do broadcast
     }
-  }
-
-  // Atualiza flag se todos estão confirmados
-  if (countKnownDevices() >= 2 && !discoveryDone) {
-    discoveryDone = true;
-    Serial.println("🟢 Todos os dispositivos confirmados! Broadcast encerrado.");
   }
 
   // Lógica de botões
   if (String(DEVICE_NAME) == "PORTEIRO") {
-    if (digitalRead(BTN1_PIN) == LOW) { sendBroadcast("OPEN|PORTA_A"); delay(300); }
-    if (digitalRead(BTN2_PIN) == LOW) { sendBroadcast("OPEN|PORTA_B"); delay(300); }
+    // Botão 1 - Abre PORTA_A
+    static bool lastBtn1 = HIGH;
+    bool btn1State = digitalRead(BTN1_PIN);
+    if (btn1State == LOW && lastBtn1 == HIGH) {
+      Serial.println("🔘 Botão 1 pressionado - tentando abrir PORTA_A");
+      if (podeAbrir("PORTA_A")) {
+        sendBroadcast("OPEN|PORTA_A");
+        Serial.println("✅ Comando enviado para PORTA_A");
+      } else {
+        Serial.println("❌ Bloqueado pelo intertravamento");
+      }
+      delay(300);
+    }
+    lastBtn1 = btn1State;
 
+    // Botão 2 - Abre PORTA_B
+    static bool lastBtn2 = HIGH;
+    bool btn2State = digitalRead(BTN2_PIN);
+    if (btn2State == LOW && lastBtn2 == HIGH) {
+      Serial.println("🔘 Botão 2 pressionado - tentando abrir PORTA_B");
+      if (podeAbrir("PORTA_B")) {
+        sendBroadcast("OPEN|PORTA_B");
+        Serial.println("✅ Comando enviado para PORTA_B");
+      } else {
+        Serial.println("❌ Bloqueado pelo intertravamento");
+      }
+      delay(300);
+    }
+    lastBtn2 = btn2State;
+
+    // Interruptor Bypass
     bool bypassState = (digitalRead(BYPASS_PIN) == LOW);
     static bool lastBypass = !bypassState;
     if (bypassState != lastBypass) {
       sendBroadcast("BYPASS|" + String(bypassState ? "ON" : "OFF"));
       lastBypass = bypassState;
+      Serial.println("🔀 Bypass alterado: " + String(bypassState ? "ON" : "OFF"));
       delay(300);
     }
   } else {
-    if (digitalRead(BTN1_PIN) == LOW) { abrirPorta(); delay(300); }
+    // Portas A e B - botão local
+    static bool lastBtn1 = HIGH;
+    bool btn1State = digitalRead(BTN1_PIN);
+    if (btn1State == LOW && lastBtn1 == HIGH) {
+      Serial.println("🔘 Botão local pressionado");
+      abrirPorta();
+      delay(300);
+    }
+    lastBtn1 = btn1State;
   }
 
-  // Atualiza estado do sensor
-  portaAberta = (digitalRead(SENSOR_PIN) == LOW);
+  // Atualiza estado do sensor e envia status se mudar
+  bool novoEstado = (digitalRead(SENSOR_PIN) == LOW);
+  if (novoEstado != portaAberta && !relayAtivo) {
+    portaAberta = novoEstado;
+    sendStatus();
+    Serial.println(portaAberta ? "🚪 Sensor: Porta ABERTA" : "🚪 Sensor: Porta FECHADA");
+  }
 
   // Desliga o relé após 5s
   if (relayAtivo && millis() - relayStart >= RELAY_TIME) {
     digitalWrite(RELAY_PIN, LOW);
     digitalWrite(PUPE_PIN, LOW);
     relayAtivo = false;
-    portaAberta = false;
-    sendStatus();
-    Serial.println("🔒 Porta fechada novamente.");
+    Serial.println("🔒 Relé desligado.");
+    
+    // Atualiza status baseado no sensor
+    bool sensorAberto = (digitalRead(SENSOR_PIN) == LOW);
+    if (portaAberta != sensorAberto) {
+      portaAberta = sensorAberto;
+      sendStatus();
+    }
   }
 }
