@@ -6,6 +6,7 @@
 const char* ssid = "Evosystems&Wires Visitante";
 const char* password = "Wifi2025";
 
+#define PORTA_TIMEOUT 300000
 #define UDP_PORT 4210
 #define RELAY_TIME 5000  // 5 segundos
 
@@ -30,10 +31,13 @@ bool relayAtivo = false;
 unsigned long lastDiscovery = 0;
 unsigned long lastPingSent = 0;
 unsigned long lastStatusSent = 0;
+unsigned long portaAbertaTempo = 0;
 
 // Estado das outras portas (recebido via rede)
 bool portaAAberta = false;
 bool portaBAberta = false;
+bool portaALock = false;
+bool portaBLock = false;
 unsigned long lastStatusPortaA = 0;
 unsigned long lastStatusPortaB = 0;
 
@@ -47,7 +51,7 @@ void sendBroadcast(const String& msg) {
 
 void sendStatus() {
   String estado = portaAberta ? "OPEN" : "CLOSED";
-  sendBroadcast("STATUS|" + String(DEVICE_NAME) + "|" + estado);
+  sendBroadcast("STATUS|" + DEVICE_NAME + "|" + estado);
 }
 
 bool podeAbrir(const String& portaAlvo) {
@@ -58,7 +62,7 @@ bool podeAbrir(const String& portaAlvo) {
   }
 
   // Verifica intertravamento: só pode abrir se a OUTRA porta estiver fechada
-  if (portaAlvo == "PORTA_A") {
+  if (portaAlvo == "PORTA_A" ) {
     // Verifica se recebeu status da PORTA_B recentemente
     if (millis() - lastStatusPortaB > 10000 && lastStatusPortaB > 0) {
       Serial.println("⚠️ Sem comunicação com PORTA_B! Bloqueando por segurança.");
@@ -87,6 +91,16 @@ bool podeAbrir(const String& portaAlvo) {
     Serial.println("✅ PORTA_A está fechada, pode abrir PORTA_B");
   }
 
+  if (portaAlvo == "PORTA_A" && portaBLock) {
+    Serial.println("🚫 PORTA_B está travando o sistema");
+    return false;
+  }
+
+  if (portaAlvo == "PORTA_B" && portaALock) {
+    Serial.println("🚫 PORTA_A está travando o sistema");
+    return false;
+  }
+
   return true;
 }
 
@@ -94,16 +108,15 @@ void abrirPorta() {
   if (relayAtivo) return;
   
   // Verifica se ESTA porta pode abrir (olhando o estado da OUTRA)
-  if (!podeAbrir(String(DEVICE_NAME))) {
+  if (!podeAbrir(DEVICE_NAME)) {
     return;
   }
 
   Serial.println("🔓 Porta abrindo...");
-  digitalWrite(RELAY_PIN, HIGH);
-  digitalWrite(PUPE_PIN, HIGH);
+  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(PUPE_PIN, LOW);
   relayStart = millis();
   relayAtivo = true;
-  portaAberta = true;
   sendStatus();
 }
 
@@ -129,7 +142,9 @@ void addDevice(const String& dev, const String& ip) {
   }
 
   // Envia confirmação mútua
-  sendBroadcast("CONFIRM|" + String(DEVICE_NAME) + "|" + localIP.toString());
+  if (countKnownDevices() < 5) {
+    sendBroadcast("CONFIRM|" + DEVICE_NAME + "|" + localIP.toString());
+  }
 }
 
 int countKnownDevices() {
@@ -163,7 +178,7 @@ void processMessage(const String& msg) {
     String dev = msg.substring(i1, i2);
     String ip = msg.substring(i2 + 1);
     addDevice(dev, ip);
-    sendBroadcast("PONG|" + String(DEVICE_NAME) + "|" + localIP.toString());
+    sendBroadcast("PONG|" + DEVICE_NAME + "|" + localIP.toString());
   }
 
   else if (msg.startsWith("PONG|")) {
@@ -179,7 +194,7 @@ void processMessage(const String& msg) {
 
   else if (msg.startsWith("OPEN|")) {
     String target = msg.substring(5);
-    Serial.println("[OPEN recebido] Target: " + target + " | Meu nome: " + String(DEVICE_NAME));
+    Serial.println("[OPEN recebido] Target: " + target + " | Meu nome: " + DEVICE_NAME);
     if (target == DEVICE_NAME) {
       abrirPorta();
     }
@@ -211,6 +226,24 @@ void processMessage(const String& msg) {
                      (estadoAnterior != portaBAberta ? " (MUDOU!)" : ""));
     }
   }
+
+  else if (msg.startsWith("LOCK|")) {
+    String dev = msg.substring(5);
+
+    if (dev == "PORTA_A") portaALock = true;
+    if (dev == "PORTA_B") portaBLock = true;
+
+    Serial.println("🔒 LOCK recebido de " + dev);
+  }
+
+  else if (msg.startsWith("UNLOCK|")) {
+    String dev = msg.substring(7);
+
+    if (dev == "PORTA_A") portaALock = false;
+    if (dev == "PORTA_B") portaBLock = false;
+
+    Serial.println("🔓 UNLOCK recebido de " + dev);
+  }
 }
 
 // ===================== SETUP ===============================
@@ -222,27 +255,46 @@ void setup() {
   pinMode(SENSOR_PIN, INPUT_PULLUP);
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(PUPE_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
-  digitalWrite(PUPE_PIN, LOW);
+  digitalWrite(RELAY_PIN, HIGH);
+  digitalWrite(PUPE_PIN, HIGH);
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   Serial.print("Conectando ao WiFi");
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
+
   Serial.println("\n✅ WiFi conectado!");
   localIP = WiFi.localIP();
   Serial.println("IP: " + localIP.toString());
-  Serial.println("Device: " + String(DEVICE_NAME));
+  Serial.println("Device: " + DEVICE_NAME);
 
   udp.begin(UDP_PORT);
-  sendBroadcast("DISCOVERY|" + String(DEVICE_NAME) + "|" + localIP.toString());
+  sendBroadcast("DISCOVERY|" + DEVICE_NAME + "|" + localIP.toString());
 }
 
 // ===================== LOOP ================================
 void loop() {
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("⚠️ WiFi desconectado, tentando reconectar...");
+    WiFi.disconnect();
+    WiFi.begin(ssid, password);
+    
+    while (WiFi.status() != WL_CONNECTED) {
+      static unsigned long lastReconnect = 0;
+      if (millis() - lastReconnect > 5000) {
+        Serial.println("⚠️ Tentando reconectar WiFi...");
+        WiFi.disconnect();
+        WiFi.begin(ssid, password);
+        lastReconnect = millis();
+      }
+    }
+    Serial.println("\n✅ Conexão restabelecida!");
+  }
   // Receber pacotes UDP
   int packetSize = udp.parsePacket();
   if (packetSize) {
@@ -254,23 +306,22 @@ void loop() {
 
   // SEMPRE envia broadcast de descoberta a cada 5s (não para nunca!)
   if (millis() - lastDiscovery > 5000) {
-    sendBroadcast("DISCOVERY|" + String(DEVICE_NAME) + "|" + localIP.toString());
+    sendBroadcast("DISCOVERY|" + DEVICE_NAME + "|" + localIP.toString());
     lastDiscovery = millis();
   }
 
   // Envia PING a cada 10s
   if (millis() - lastPingSent > 10000) {
-    sendBroadcast("PING|" + String(DEVICE_NAME) + "|" + localIP.toString());
+    sendBroadcast("PING|" + DEVICE_NAME + "|" + localIP.toString());
     lastPingSent = millis();
   }
 
-  // Envia STATUS a cada 3s (para manter todos sincronizados)
-  if (millis() - lastStatusSent > 3000) {
+  // Envia STATUS a cada 15s (para manter todos sincronizados)
+  if (millis() - lastStatusSent > 15000) {
     sendStatus();
     lastStatusSent = millis();
     
-    // Debug: mostra estado atual
-    Serial.println("--- DEBUG Estado Atual ---");
+
     Serial.println("Minha porta: " + String(portaAberta ? "ABERTA" : "FECHADA"));
     Serial.println("PORTA_A: " + String(portaAAberta ? "ABERTA" : "FECHADA") + 
                    " (última atualização: " + String(millis() - lastStatusPortaA) + "ms)");
@@ -345,16 +396,23 @@ void loop() {
 
   // Atualiza estado do sensor e envia status se mudar
   bool novoEstado = (digitalRead(SENSOR_PIN) == LOW);
-  if (novoEstado != portaAberta && !relayAtivo) {
+  if (novoEstado != portaAberta) {
     portaAberta = novoEstado;
+    if (portaAberta) {
+      portaAbertaTempo = millis();
+      sendBroadcast("LOCK|" + DEVICE_NAME);
+    }
+    else {
+      sendBroadcast("UNLOCK|" + DEVICE_NAME);
+    }
     sendStatus();
     Serial.println(portaAberta ? "🚪 Sensor: Porta ABERTA" : "🚪 Sensor: Porta FECHADA");
   }
 
   // Desliga o relé após 5s
   if (relayAtivo && millis() - relayStart >= RELAY_TIME) {
-    digitalWrite(RELAY_PIN, LOW);
-    digitalWrite(PUPE_PIN, LOW);
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(PUPE_PIN, HIGH);
     relayAtivo = false;
     Serial.println("🔒 Relé desligado.");
     
@@ -364,5 +422,10 @@ void loop() {
       portaAberta = sensorAberto;
       sendStatus();
     }
+  }
+
+  if (portaAberta && millis() - portaAbertaTempo > PORTA_TIMEOUT) {
+    Serial.println("⚠️ Porta aberta por muito tempo! Enviando alerta...");
+    // CRIAR UMA LÓGICA DE ALERTA AQUI
   }
 }
