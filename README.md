@@ -1,4 +1,4 @@
-# Project HADES: Interlock Automation
+# Project JANUS: Interlock Automation
 
 ![ESP8266](https://img.shields.io/badge/Platform-ESP8266-blue?logo=espressif)
 ![Framework](https://img.shields.io/badge/Framework-Arduino-teal?logo=arduino)
@@ -9,7 +9,7 @@
 
 ## Overview
 
-Project HADES is a **distributed interlock door control system** built using **ESP8266 (NodeMCU)** devices.
+Project JANUS is a **distributed interlock door control system** built using **ESP8266 (NodeMCU)** devices.
 
 The system allows multiple door controllers to communicate with each other over a local Wi-Fi network using **UDP broadcast messages**.
 
