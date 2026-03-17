@@ -2,7 +2,7 @@
  * Node_Porta_A.ino  —  v4.0
  * Sistema de controle de portas com intertravamento via UDP/WiFi
  * Dispositivos: PORTA_A | PORTA_B | PORTEIRO
-*/
+ */
 
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
@@ -10,17 +10,17 @@
 #include <EEPROM.h>
 
 // ====================== IDENTIFICAÇÃO =======================
-#define DEVICE_NAME  "PORTA_A"   // 👉 altere para "PORTA_A", "PORTA_B" ou "PORTEIRO"
-#define DEV_PORTA_A  "PORTA_A"
-#define DEV_PORTA_B  "PORTA_B"
+#define DEVICE_NAME "PORTA_A" // 👉 altere para "PORTA_A", "PORTA_B" ou "PORTEIRO"
+#define DEV_PORTA_A "PORTA_A"
+#define DEV_PORTA_B "PORTA_B"
 #define DEV_PORTEIRO "PORTEIRO"
 
 // ====================== EEPROM ==============================
 // Layout: [0..63] ssid | [64..127] password | [128] flag válido (0xAA)
-#define EEPROM_SIZE        256
-#define EEPROM_SSID_ADDR     0
-#define EEPROM_PASS_ADDR    64
-#define EEPROM_VALID_ADDR  128
+#define EEPROM_SIZE 256
+#define EEPROM_SSID_ADDR 0
+#define EEPROM_PASS_ADDR 64
+#define EEPROM_VALID_ADDR 128
 #define EEPROM_VALID_MAGIC 0xAA
 
 // ====================== AP FALLBACK =========================
@@ -28,92 +28,97 @@
 // PORTA_A e PORTA_B usam estas mesmas constantes para conectar no PORTEIRO.
 #define FALLBACK_AP_SSID "PORTEIRO_AP"
 #define FALLBACK_AP_PASS "porteiro123"
-#define FALLBACK_AP_IP   "192.168.4.1"
+#define FALLBACK_AP_IP "192.168.4.1"
 
-#define WIFI_CONNECT_TIMEOUT   15000UL   // espera máxima no boot
-#define WIFI_RECONNECT_TIMEOUT 20000UL   // espera antes de ativar fallback no loop
+#define WIFI_CONNECT_TIMEOUT 15000UL   // espera máxima no boot
+#define WIFI_RECONNECT_TIMEOUT 20000UL // espera antes de ativar fallback no loop
 
 // ====================== SISTEMA =============================
-#define PORTA_TIMEOUT     300000UL
-#define UDP_PORT          4210
-#define RELAY_TIME        5000UL
-#define SENSOR_OPEN       LOW
+#define PORTA_TIMEOUT 300000UL
+#define UDP_PORT 4210
+#define RELAY_TIME 5000UL
+#define SENSOR_OPEN LOW
 #define MASTER_LEASE_TIME 15000UL
-#define MASTER_TIMEOUT    20000UL
-#define MAX_DEVICES       10
+#define MASTER_TIMEOUT 20000UL
+#define MAX_DEVICES 10
 
 // ====================== PINOS ================================
-#define BTN1_PIN   5
-#define BTN2_PIN   4
+#define BTN1_PIN 5
+#define BTN2_PIN 4
 #define BYPASS_PIN 0
 #define SENSOR_PIN 14
-#define RELAY_PIN  12
-#define PUPE_PIN   13
+#define RELAY_PIN 12
+#define PUPE_PIN 13
 
 // ====================== STRUCT DEVICE =======================
 // Agrupa nome, IP (string) e timestamp do último ping em um único registro.
 // Substitui os três arrays separados (knownNames / knownIPs / lastPing).
 struct Device
 {
-  char          name[16];
-  char          ip[16];
+  char name[16];
+  char ip[16];
   unsigned long lastPing;
 };
 
-Device devices[MAX_DEVICES];   // tabela de dispositivos conhecidos
+Device devices[MAX_DEVICES]; // tabela de dispositivos conhecidos
 
 // ── helpers inline para a tabela ────────────────────────────
 inline void deviceClear(int i)
 {
   devices[i].name[0] = '\0';
-  devices[i].ip[0]   = '\0';
+  devices[i].ip[0] = '\0';
   devices[i].lastPing = 0;
 }
 
-inline bool deviceEmpty(int i)     { return devices[i].name[0] == '\0'; }
+inline bool deviceEmpty(int i) { return devices[i].name[0] == '\0'; }
 inline bool deviceMatch(int i, const char *n) { return strcmp(devices[i].name, n) == 0; }
 
 // ====================== ESTADO WIFI =========================
-enum WifiMode { WIFI_MODE_NORMAL, WIFI_MODE_CONFIG, WIFI_MODE_FALLBACK };
-WifiMode wifiMode      = WIFI_MODE_NORMAL;
-bool     fallbackAtivo = false;
+enum WifiMode
+{
+  WIFI_MODE_NORMAL,
+  WIFI_MODE_CONFIG,
+  WIFI_MODE_FALLBACK
+};
+WifiMode wifiMode = WIFI_MODE_NORMAL;
+bool fallbackAtivo = false;
 unsigned long wifiDownSince = 0;
 
 ESP8266WebServer webServer(80);
 
 // ====================== VARIÁVEIS ============================
-WiFiUDP   udp;
+WiFiUDP udp;
 IPAddress localIP;
 
-int  devicePriority = 1;
-int  masterPriority = 0;
-bool isMaster       = false;
+int devicePriority = 1;
+int masterPriority = 0;
+bool isMaster = false;
 char networkMaster[16] = "";
-char tokenOwner[16]    = "";
+char tokenOwner[16] = "";
 
-bool bypassMode    = false;
-bool portaAberta   = false;
+bool bypassMode = false;
+bool portaAberta = false;
 bool sensorLeitura = false;
-bool relayAtivo    = false;
-bool masterBusy    = false;
-bool alertSent     = false;
+bool relayAtivo = false;
+bool masterBusy = false;
+bool alertSent = false;
 
-unsigned long masterBusyTime    = 0;
-unsigned long relayStart        = 0;
-unsigned long lastDiscovery     = 0;
-unsigned long lastPingSent      = 0;
-unsigned long lastStatusSent    = 0;
-unsigned long portaAbertaTempo  = 0;
+unsigned long masterBusyTime = 0;
+unsigned long relayStart = 0;
+unsigned long lastDiscovery = 0;
+unsigned long lastPingSent = 0;
+unsigned long lastStatusSent = 0;
+unsigned long portaAbertaTempo = 0;
 unsigned long masterLeaseExpire = 0;
-unsigned long lastOpenEvent     = 0;
-unsigned long sensorDebounce    = 0;
-unsigned long openToken         = 0;
-unsigned long currentToken      = 0;
+unsigned long lastOpenEvent = 0;
+unsigned long sensorDebounce = 0;
+unsigned long openToken = 0;
+unsigned long currentToken = 0;
 
 // ===================== TOKEN LOCK ===========================
-bool          tokenActive = false;
-char          tokenPorta[16] = "";
-unsigned long tokenExpire    = 0;
+bool tokenActive = false;
+char tokenPorta[16] = "";
+unsigned long tokenExpire = 0;
 
 bool adquirirToken(const char *porta)
 {
@@ -130,26 +135,26 @@ bool adquirirToken(const char *porta)
 
 void liberarToken()
 {
-  tokenActive   = false;
+  tokenActive = false;
   tokenPorta[0] = '\0';
 }
 
 // ===================== ESTADO DAS OUTRAS PORTAS =============
 bool portaAAberta = false;
 bool portaBAberta = false;
-bool portaALock   = false;
-bool portaBLock   = false;
+bool portaALock = false;
+bool portaBLock = false;
 
-bool          aguardandoAutorizacao = false;
-unsigned long lastStatusPortaA     = 0;
-unsigned long lastStatusPortaB     = 0;
-unsigned long lastMasterSeen       = 0;
+bool aguardandoAutorizacao = false;
+unsigned long lastStatusPortaA = 0;
+unsigned long lastStatusPortaB = 0;
+unsigned long lastMasterSeen = 0;
 
 #define REQ_RETRY_INTERVAL 1000UL
-#define REQ_MAX_RETRIES    3
-char          reqPorta[16] = "";
-int           reqRetryCount = 0;
-unsigned long lastReqSent   = 0;
+#define REQ_MAX_RETRIES 3
+char reqPorta[16] = "";
+int reqRetryCount = 0;
+unsigned long lastReqSent = 0;
 
 // ===================== EEPROM ================================
 
@@ -158,7 +163,8 @@ void eepromReadStr(int addr, char *buf, int maxLen)
   for (int i = 0; i < maxLen - 1; i++)
   {
     buf[i] = EEPROM.read(addr + i);
-    if (buf[i] == '\0') break;
+    if (buf[i] == '\0')
+      break;
   }
   buf[maxLen - 1] = '\0';
 }
@@ -201,7 +207,8 @@ void startConfigPortal()
   Serial.print(F("IP do portal: "));
   Serial.println(WiFi.softAPIP());
 
-  webServer.on("/", HTTP_GET, []() {
+  webServer.on("/", HTTP_GET, []()
+               {
     String html =
       F("<!DOCTYPE html><html><head>"
         "<meta charset='utf-8'>"
@@ -230,10 +237,10 @@ void startConfigPortal()
         "</form>"
         "<div class='footer'>EVO Systems</div>"
         "</body></html>");
-    webServer.send(200, "text/html", html);
-  });
+    webServer.send(200, "text/html", html); });
 
-  webServer.on("/save", HTTP_POST, []() {
+  webServer.on("/save", HTTP_POST, []()
+               {
     String newSsid = webServer.arg("ssid");
     String newPass = webServer.arg("pass");
     if (newSsid.length() == 0)
@@ -253,8 +260,7 @@ void startConfigPortal()
     delay(600);
     eepromSaveCredentials(newSsid.c_str(), newPass.c_str());
     delay(400);
-    ESP.restart();
-  });
+    ESP.restart(); });
 
   webServer.begin();
   wifiMode = WIFI_MODE_CONFIG;
@@ -267,10 +273,13 @@ void startFallbackAP()
   Serial.println(F("🆘 Roteador indisponível! Subindo AP de fallback..."));
   WiFi.mode(WIFI_AP);
   WiFi.softAP(FALLBACK_AP_SSID, FALLBACK_AP_PASS);
-  Serial.print(F("AP ativo: ")); Serial.print(FALLBACK_AP_SSID);
-  Serial.print(F("  IP: ")); Serial.println(WiFi.softAPIP());
+  Serial.print(F("AP ativo: "));
+  Serial.print(FALLBACK_AP_SSID);
+  Serial.print(F("  IP: "));
+  Serial.println(WiFi.softAPIP());
 
-  webServer.on("/", HTTP_GET, []() {
+  webServer.on("/", HTTP_GET, []()
+               {
     unsigned long now = millis();
     String html =
       F("<!DOCTYPE html><html><head>"
@@ -312,13 +321,12 @@ void startFallbackAP()
     html += "</span></td></tr>";
 
     html += F("</table><p class='note'>Atualiza a cada 5s</p></body></html>");
-    webServer.send(200, "text/html", html);
-  });
+    webServer.send(200, "text/html", html); });
 
   webServer.begin();
   fallbackAtivo = true;
-  wifiMode      = WIFI_MODE_FALLBACK;
-  localIP       = WiFi.softAPIP();
+  wifiMode = WIFI_MODE_FALLBACK;
+  localIP = WiFi.softAPIP();
   udp.stop();
   udp.begin(UDP_PORT);
 }
@@ -332,7 +340,7 @@ void connectFallbackAsClient()
   unsigned long t = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t < 10000UL)
   {
-    ESP.wdtFeed();   // ← watchdog: evita reset durante este loop bloqueante
+    ESP.wdtFeed(); // ← watchdog: evita reset durante este loop bloqueante
     delay(300);
     Serial.print(F("."));
   }
@@ -342,11 +350,12 @@ void connectFallbackAsClient()
   {
     Serial.println(F("✅ Conectado no AP do PORTEIRO!"));
     localIP = WiFi.localIP();
-    Serial.print(F("IP: ")); Serial.println(localIP);
+    Serial.print(F("IP: "));
+    Serial.println(localIP);
     udp.stop();
     udp.begin(UDP_PORT);
     fallbackAtivo = true;
-    wifiMode      = WIFI_MODE_FALLBACK;
+    wifiMode = WIFI_MODE_FALLBACK;
   }
   else
   {
@@ -358,7 +367,8 @@ void connectFallbackAsClient()
 
 void sendBroadcast(const char *msg)
 {
-  IPAddress broadcastIP = WiFi.localIP() | ~WiFi.subnetMask();
+  IPAddress broadcastIP = IPAddress(
+      (uint32_t)WiFi.localIP() | ~(uint32_t)WiFi.subnetMask());
   udp.beginPacket(broadcastIP, UDP_PORT);
   udp.print(msg);
   udp.endPacket();
@@ -375,15 +385,18 @@ void sendStatus()
 
 bool deviceKnown(const char *dev)
 {
-  if (strcmp(dev, DEVICE_NAME) == 0) return true;
+  if (strcmp(dev, DEVICE_NAME) == 0)
+    return true;
   for (int i = 0; i < MAX_DEVICES; i++)
-    if (!deviceEmpty(i) && deviceMatch(i, dev)) return true;
+    if (!deviceEmpty(i) && deviceMatch(i, dev))
+      return true;
   return false;
 }
 
 void addDevice(const char *dev, const char *ip)
 {
-  if (!dev || !ip || strcmp(dev, DEVICE_NAME) == 0) return;
+  if (!dev || !ip || strcmp(dev, DEVICE_NAME) == 0)
+    return;
 
   // Atualiza existente
   for (int i = 0; i < MAX_DEVICES; i++)
@@ -403,11 +416,13 @@ void addDevice(const char *dev, const char *ip)
     {
       strncpy(devices[i].name, dev, sizeof(devices[i].name) - 1);
       devices[i].name[sizeof(devices[i].name) - 1] = '\0';
-      strncpy(devices[i].ip,   ip,  sizeof(devices[i].ip)   - 1);
+      strncpy(devices[i].ip, ip, sizeof(devices[i].ip) - 1);
       devices[i].ip[sizeof(devices[i].ip) - 1] = '\0';
       devices[i].lastPing = millis();
-      Serial.print(F("[DISCOVERY] ")); Serial.print(dev);
-      Serial.print(F(" -> ")); Serial.println(ip);
+      Serial.print(F("[DISCOVERY] "));
+      Serial.print(dev);
+      Serial.print(F(" -> "));
+      Serial.println(ip);
       break;
     }
   }
@@ -418,18 +433,18 @@ void addDevice(const char *dev, const char *ip)
 void assumirMaster()
 {
   Serial.println(F("👑 Assumindo papel de master!"));
-  masterPriority  = devicePriority;
+  masterPriority = devicePriority;
   strncpy(networkMaster, DEVICE_NAME, sizeof(networkMaster) - 1);
   networkMaster[sizeof(networkMaster) - 1] = '\0';
-  isMaster          = true;
+  isMaster = true;
   masterLeaseExpire = millis() + MASTER_LEASE_TIME * 2;
-  lastMasterSeen    = millis();
+  lastMasterSeen = millis();
 }
 
 void abdicarMaster(int novaPrio, const char *novoDev)
 {
   Serial.println(F("⚠️ Master com prioridade maior detectado! Abdicando."));
-  isMaster       = false;
+  isMaster = false;
   masterPriority = novaPrio;
   strncpy(networkMaster, novoDev, sizeof(networkMaster) - 1);
   networkMaster[sizeof(networkMaster) - 1] = '\0';
@@ -437,9 +452,10 @@ void abdicarMaster(int novaPrio, const char *novoDev)
 
 void checkMasterHealth()
 {
-  if (isMaster) return;
-  bool masterConhecido  = (networkMaster[0] != '\0');
-  bool leaseExpirou     = masterConhecido && (millis() > masterLeaseExpire);
+  if (isMaster)
+    return;
+  bool masterConhecido = (networkMaster[0] != '\0');
+  bool leaseExpirou = masterConhecido && (millis() > masterLeaseExpire);
   bool masterSilencioso = masterConhecido && (millis() - lastMasterSeen > MASTER_TIMEOUT);
   if (leaseExpirou || masterSilencioso)
   {
@@ -452,19 +468,20 @@ void checkMasterHealth()
 
 void processHello(const char *dev, int prio, const char *ip, unsigned long lease)
 {
-  if (isMaster && prio > devicePriority) abdicarMaster(prio, dev);
+  if (isMaster && prio > devicePriority)
+    abdicarMaster(prio, dev);
 
   if (strcmp(dev, networkMaster) == 0)
   {
     masterLeaseExpire = millis() + lease;
-    lastMasterSeen    = millis();
+    lastMasterSeen = millis();
   }
   if (prio > masterPriority)
   {
     masterPriority = prio;
     strncpy(networkMaster, dev, sizeof(networkMaster) - 1);
     networkMaster[sizeof(networkMaster) - 1] = '\0';
-    isMaster       = (strcmp(dev, DEVICE_NAME) == 0);
+    isMaster = (strcmp(dev, DEVICE_NAME) == 0);
     lastMasterSeen = millis();
   }
   else if (prio == masterPriority && strcmp(dev, DEVICE_NAME) != 0)
@@ -473,7 +490,7 @@ void processHello(const char *dev, int prio, const char *ip, unsigned long lease
     {
       strncpy(networkMaster, dev, sizeof(networkMaster) - 1);
       networkMaster[sizeof(networkMaster) - 1] = '\0';
-      isMaster       = false;
+      isMaster = false;
       lastMasterSeen = millis();
     }
   }
@@ -528,12 +545,13 @@ bool podeAbrir(const char *portaAlvo)
 
 void abrirPorta()
 {
-  if (relayAtivo) return;
+  if (relayAtivo)
+    return;
   Serial.println(F("🚪 Abrindo porta"));
   digitalWrite(RELAY_PIN, LOW);
-  digitalWrite(PUPE_PIN,  LOW);
-  relayStart    = millis();
-  relayAtivo    = true;
+  digitalWrite(PUPE_PIN, LOW);
+  relayStart = millis();
+  relayAtivo = true;
   lastOpenEvent = millis();
 }
 
@@ -557,12 +575,13 @@ void solicitarAbertura(const char *porta)
     }
     else
     {
-      Serial.print(F("⚡ Master remoto: OPEN direto para ")); Serial.println(porta);
+      Serial.print(F("⚡ Master remoto: OPEN direto para "));
+      Serial.println(porta);
       if (adquirirToken(porta))
       {
-        masterBusy     = true;
+        masterBusy = true;
         masterBusyTime = millis();
-        currentToken   = millis();
+        currentToken = millis();
         strncpy(tokenOwner, DEVICE_NAME, sizeof(tokenOwner) - 1);
         char openMsg[32];
         snprintf(openMsg, sizeof(openMsg), "OPEN|%s", porta);
@@ -591,8 +610,8 @@ void solicitarAbertura(const char *porta)
     snprintf(reqMsg, sizeof(reqMsg), "REQ_OPEN|%s|%s|%lu", porta, DEVICE_NAME, openToken);
     sendBroadcast(reqMsg);
     aguardandoAutorizacao = true;
-    lastReqSent           = millis();
-    reqRetryCount         = 0;
+    lastReqSent = millis();
+    reqRetryCount = 0;
     strncpy(reqPorta, porta, sizeof(reqPorta) - 1);
     reqPorta[sizeof(reqPorta) - 1] = '\0';
   }
@@ -618,14 +637,15 @@ static int splitMsg(char *buf, size_t bufSize, const char *src, char **fields, i
 
 void processMessage(char *msg)
 {
-  char  buf[256];
+  char buf[256];
   char *f[8];
-  int   n;
+  int n;
 
   if (strncmp(msg, "DISCOVERY|", 10) == 0 || strncmp(msg, "CONFIRM|", 8) == 0)
   {
     n = splitMsg(buf, sizeof(buf), msg, f, 3);
-    if (n >= 3) addDevice(f[1], f[2]);
+    if (n >= 3)
+      addDevice(f[1], f[2]);
   }
   else if (strncmp(msg, "PING|", 5) == 0)
   {
@@ -643,50 +663,77 @@ void processMessage(char *msg)
   else if (strncmp(msg, "HELLO|", 6) == 0)
   {
     n = splitMsg(buf, sizeof(buf), msg, f, 6);
-    if (n < 6) return;
+    if (n < 6)
+      return;
     addDevice(f[1], f[3]);
     processHello(f[1], atoi(f[2]), f[3], (unsigned long)atol(f[5]));
   }
   else if (strncmp(msg, "PONG|", 5) == 0)
   {
     n = splitMsg(buf, sizeof(buf), msg, f, 3);
-    if (n < 2) return;
+    if (n < 2)
+      return;
     for (int i = 0; i < MAX_DEVICES; i++)
-      if (!deviceEmpty(i) && deviceMatch(i, f[1])) { devices[i].lastPing = millis(); break; }
+      if (!deviceEmpty(i) && deviceMatch(i, f[1]))
+      {
+        devices[i].lastPing = millis();
+        break;
+      }
   }
   else if (strncmp(msg, "REQ_OPEN|", 9) == 0)
   {
-    if (!isMaster) return;
+    if (!isMaster)
+      return;
     n = splitMsg(buf, sizeof(buf), msg, f, 4);
-    if (n < 4) return;
-    if (!deviceKnown(f[2])) return;
-    Serial.print(F("📩 REQ_OPEN: ")); Serial.print(f[1]); Serial.print(F(" de ")); Serial.println(f[2]);
+    if (n < 4)
+      return;
+    if (!deviceKnown(f[2]))
+      return;
+    Serial.print(F("📩 REQ_OPEN: "));
+    Serial.print(f[1]);
+    Serial.print(F(" de "));
+    Serial.println(f[2]);
     if (masterBusy || !podeAbrir(f[1]))
     {
-      char denyMsg[64]; snprintf(denyMsg, sizeof(denyMsg), "DENY|%s", f[1]); sendBroadcast(denyMsg); return;
+      char denyMsg[64];
+      snprintf(denyMsg, sizeof(denyMsg), "DENY|%s", f[1]);
+      sendBroadcast(denyMsg);
+      return;
     }
     if (adquirirToken(f[1]))
     {
-      masterBusy     = true; masterBusyTime = millis();
-      currentToken   = (unsigned long)atol(f[3]);
-      strncpy(tokenOwner, f[2], sizeof(tokenOwner) - 1); tokenOwner[sizeof(tokenOwner)-1] = '\0';
-      char allowMsg[64]; snprintf(allowMsg, sizeof(allowMsg), "ALLOW|%s|%lu", f[1], currentToken); sendBroadcast(allowMsg);
+      masterBusy = true;
+      masterBusyTime = millis();
+      currentToken = (unsigned long)atol(f[3]);
+      strncpy(tokenOwner, f[2], sizeof(tokenOwner) - 1);
+      tokenOwner[sizeof(tokenOwner) - 1] = '\0';
+      char allowMsg[64];
+      snprintf(allowMsg, sizeof(allowMsg), "ALLOW|%s|%lu", f[1], currentToken);
+      sendBroadcast(allowMsg);
     }
     else
     {
-      char denyMsg[64]; snprintf(denyMsg, sizeof(denyMsg), "DENY|%s", f[1]); sendBroadcast(denyMsg);
+      char denyMsg[64];
+      snprintf(denyMsg, sizeof(denyMsg), "DENY|%s", f[1]);
+      sendBroadcast(denyMsg);
     }
   }
   else if (strncmp(msg, "ALLOW|", 6) == 0)
   {
     n = splitMsg(buf, sizeof(buf), msg, f, 3);
-    if (n < 3) return;
+    if (n < 3)
+      return;
     if (strcmp(f[1], DEVICE_NAME) == 0 && (unsigned long)atol(f[2]) == openToken)
     {
       Serial.println(F("✅ Autorização recebida!"));
-      lastOpenEvent = millis(); abrirPorta();
-      char ackMsg[64]; snprintf(ackMsg, sizeof(ackMsg), "ACK_OPEN|%s", DEVICE_NAME); sendBroadcast(ackMsg);
-      aguardandoAutorizacao = false; reqRetryCount = 0; reqPorta[0] = '\0';
+      lastOpenEvent = millis();
+      abrirPorta();
+      char ackMsg[64];
+      snprintf(ackMsg, sizeof(ackMsg), "ACK_OPEN|%s", DEVICE_NAME);
+      sendBroadcast(ackMsg);
+      aguardandoAutorizacao = false;
+      reqRetryCount = 0;
+      reqPorta[0] = '\0';
     }
   }
   else if (strncmp(msg, "DENY|", 5) == 0)
@@ -694,17 +741,25 @@ void processMessage(char *msg)
     if (strcmp(msg + 5, DEVICE_NAME) == 0)
     {
       Serial.println(F("❌ Abertura negada!"));
-      aguardandoAutorizacao = false; reqRetryCount = 0; reqPorta[0] = '\0';
+      aguardandoAutorizacao = false;
+      reqRetryCount = 0;
+      reqPorta[0] = '\0';
     }
   }
   else if (strncmp(msg, "ACK_OPEN|", 9) == 0)
   {
-    Serial.print(F("✔ ACK_OPEN de ")); Serial.println(msg + 9);
-    if (isMaster) { masterBusy = false; liberarToken(); }
+    Serial.print(F("✔ ACK_OPEN de "));
+    Serial.println(msg + 9);
+    if (isMaster)
+    {
+      masterBusy = false;
+      liberarToken();
+    }
   }
   else if (strncmp(msg, "OPEN|", 5) == 0)
   {
-    if (strcmp(msg + 5, DEVICE_NAME) == 0) solicitarAbertura(DEVICE_NAME);
+    if (strcmp(msg + 5, DEVICE_NAME) == 0)
+      solicitarAbertura(DEVICE_NAME);
   }
   else if (strncmp(msg, "BYPASS|", 7) == 0)
   {
@@ -714,47 +769,58 @@ void processMessage(char *msg)
   else if (strncmp(msg, "STATUS|", 7) == 0)
   {
     n = splitMsg(buf, sizeof(buf), msg, f, 3);
-    if (n < 3) return;
+    if (n < 3)
+      return;
     if (strcmp(f[1], DEV_PORTA_A) == 0)
     {
       bool ant = portaAAberta;
       portaAAberta = (strcmp(f[2], "OPEN") == 0);
-      portaALock   = portaAAberta && strcmp(DEVICE_NAME, DEV_PORTA_A) != 0;
+      portaALock = portaAAberta && strcmp(DEVICE_NAME, DEV_PORTA_A) != 0;
       lastStatusPortaA = millis();
-      Serial.print(F("[STATUS] PORTA_A: ")); Serial.print(f[2]);
+      Serial.print(F("[STATUS] PORTA_A: "));
+      Serial.print(f[2]);
       Serial.println(ant != portaAAberta ? F(" (MUDOU!)") : F(""));
     }
     else if (strcmp(f[1], DEV_PORTA_B) == 0)
     {
       bool ant = portaBAberta;
       portaBAberta = (strcmp(f[2], "OPEN") == 0);
-      portaBLock   = portaBAberta && strcmp(DEVICE_NAME, DEV_PORTA_B) != 0;
+      portaBLock = portaBAberta && strcmp(DEVICE_NAME, DEV_PORTA_B) != 0;
       lastStatusPortaB = millis();
-      Serial.print(F("[STATUS] PORTA_B: ")); Serial.print(f[2]);
+      Serial.print(F("[STATUS] PORTA_B: "));
+      Serial.print(f[2]);
       Serial.println(ant != portaBAberta ? F(" (MUDOU!)") : F(""));
     }
   }
   else if (strncmp(msg, "LOCK|", 5) == 0)
   {
     const char *dev = msg + 5;
-    if (strcmp(dev, DEV_PORTA_A) == 0) portaALock = true;
-    if (strcmp(dev, DEV_PORTA_B) == 0) portaBLock = true;
-    Serial.print(F("🔒 LOCK de ")); Serial.println(dev);
+    if (strcmp(dev, DEV_PORTA_A) == 0)
+      portaALock = true;
+    if (strcmp(dev, DEV_PORTA_B) == 0)
+      portaBLock = true;
+    Serial.print(F("🔒 LOCK de "));
+    Serial.println(dev);
   }
   else if (strncmp(msg, "UNLOCK|", 7) == 0)
   {
     const char *dev = msg + 7;
-    if (strcmp(dev, DEV_PORTA_A) == 0) portaALock = false;
-    if (strcmp(dev, DEV_PORTA_B) == 0) portaBLock = false;
-    Serial.print(F("🔓 UNLOCK de ")); Serial.println(dev);
+    if (strcmp(dev, DEV_PORTA_A) == 0)
+      portaALock = false;
+    if (strcmp(dev, DEV_PORTA_B) == 0)
+      portaBLock = false;
+    Serial.print(F("🔓 UNLOCK de "));
+    Serial.println(dev);
   }
   else if (strncmp(msg, "ALERT|", 6) == 0)
   {
     n = splitMsg(buf, sizeof(buf), msg, f, 3);
     if (n >= 3)
     {
-      Serial.print(F("🚨 ALERTA: ")); Serial.print(f[1]);
-      Serial.print(F(" de ")); Serial.println(f[2]);
+      Serial.print(F("🚨 ALERTA: "));
+      Serial.print(f[1]);
+      Serial.print(F(" de "));
+      Serial.println(f[2]);
     }
   }
 }
@@ -769,20 +835,23 @@ void setup()
   // Watchdog de software: permite até 8s sem feed antes de resetar
   ESP.wdtEnable(8000);
 
-  pinMode(BTN1_PIN,   INPUT_PULLUP);
-  pinMode(BTN2_PIN,   INPUT_PULLUP);
+  pinMode(BTN1_PIN, INPUT_PULLUP);
+  pinMode(BTN2_PIN, INPUT_PULLUP);
   pinMode(BYPASS_PIN, INPUT_PULLUP);
   pinMode(SENSOR_PIN, INPUT_PULLUP);
-  pinMode(RELAY_PIN,  OUTPUT);
-  pinMode(PUPE_PIN,   OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(PUPE_PIN, OUTPUT);
   digitalWrite(RELAY_PIN, HIGH);
-  digitalWrite(PUPE_PIN,  HIGH);
+  digitalWrite(PUPE_PIN, HIGH);
 
   memset(devices, 0, sizeof(devices));
 
-  if      (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0) devicePriority = 3;
-  else if (strcmp(DEVICE_NAME, DEV_PORTA_A)  == 0) devicePriority = 2;
-  else                                               devicePriority = 1;
+  if (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0)
+    devicePriority = 3;
+  else if (strcmp(DEVICE_NAME, DEV_PORTA_A) == 0)
+    devicePriority = 2;
+  else
+    devicePriority = 1;
 
   // ── Fase 1: sem credenciais → portal de configuração ──────────────
   if (!eepromHasCredentials())
@@ -796,14 +865,15 @@ void setup()
   eepromReadStr(EEPROM_SSID_ADDR, savedSsid, sizeof(savedSsid));
   eepromReadStr(EEPROM_PASS_ADDR, savedPass, sizeof(savedPass));
 
-  Serial.print(F("Conectando ao WiFi: ")); Serial.println(savedSsid);
+  Serial.print(F("Conectando ao WiFi: "));
+  Serial.println(savedSsid);
   WiFi.mode(WIFI_STA);
   WiFi.begin(savedSsid, savedPass);
 
   unsigned long t = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t < WIFI_CONNECT_TIMEOUT)
   {
-    ESP.wdtFeed();   // ← watchdog: loop pode durar até 15s
+    ESP.wdtFeed(); // ← watchdog: loop pode durar até 15s
     delay(400);
     Serial.print(F("."));
   }
@@ -811,21 +881,24 @@ void setup()
 
   if (WiFi.status() == WL_CONNECTED)
   {
-    localIP  = WiFi.localIP();
+    localIP = WiFi.localIP();
     wifiMode = WIFI_MODE_NORMAL;
     Serial.println(F("✅ WiFi conectado!"));
-    Serial.print(F("IP: ")); Serial.println(localIP);
+    Serial.print(F("IP: "));
+    Serial.println(localIP);
   }
   else
   {
     Serial.println(F("❌ Roteador indisponível no boot. Ativando fallback."));
-    if (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0) startFallbackAP();
-    else                                          connectFallbackAsClient();
+    if (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0)
+      startFallbackAP();
+    else
+      connectFallbackAsClient();
   }
 
   // ── Fase 3: inicializar e anunciar ────────────────────────────────
   udp.begin(UDP_PORT);
-  portaAberta   = (digitalRead(SENSOR_PIN) == SENSOR_OPEN);
+  portaAberta = (digitalRead(SENSOR_PIN) == SENSOR_OPEN);
   sensorLeitura = portaAberta;
   assumirMaster();
 
@@ -834,7 +907,8 @@ void setup()
   sendBroadcast(msg);
   sendStatus();
 
-  Serial.print(F("Device: ")); Serial.println(DEVICE_NAME);
+  Serial.print(F("Device: "));
+  Serial.println(DEVICE_NAME);
   Serial.print(F("Modo WiFi: "));
   Serial.println(wifiMode == WIFI_MODE_NORMAL ? F("NORMAL") : F("FALLBACK"));
 }
@@ -843,7 +917,7 @@ void setup()
 
 void loop()
 {
-  ESP.wdtFeed();   // ← alimenta o watchdog a cada ciclo do loop principal
+  ESP.wdtFeed(); // ← alimenta o watchdog a cada ciclo do loop principal
 
   // Modo CONFIG: só serve o portal até reiniciar
   if (wifiMode == WIFI_MODE_CONFIG)
@@ -859,11 +933,12 @@ void loop()
   if (leitura != sensorLeitura && now - sensorDebounce > 100UL)
   {
     sensorDebounce = now;
-    sensorLeitura  = leitura;
+    sensorLeitura = leitura;
   }
 
   // --- Página de status (fallback) ---
-  if (fallbackAtivo) webServer.handleClient();
+  if (fallbackAtivo)
+    webServer.handleClient();
 
   // ── Gerenciamento de WiFi (modo NORMAL) ───────────────────────────
   if (wifiMode == WIFI_MODE_NORMAL)
@@ -872,7 +947,8 @@ void loop()
 
     if (WiFi.status() != WL_CONNECTED)
     {
-      if (wifiDownSince == 0) wifiDownSince = now;
+      if (wifiDownSince == 0)
+        wifiDownSince = now;
 
       if (now - lastReconnect > 5000UL)
       {
@@ -889,8 +965,10 @@ void loop()
       {
         Serial.println(F("⏱️ Roteador ausente. Ativando fallback."));
         udp.stop();
-        if (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0) startFallbackAP();
-        else                                          connectFallbackAsClient();
+        if (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0)
+          startFallbackAP();
+        else
+          connectFallbackAsClient();
         wifiDownSince = 0;
       }
     }
@@ -899,7 +977,7 @@ void loop()
       if (wifiDownSince != 0)
       {
         Serial.println(F("✅ Conexão restabelecida!"));
-        localIP       = WiFi.localIP();
+        localIP = WiFi.localIP();
         wifiDownSince = 0;
         udp.stop();
         udp.begin(UDP_PORT);
@@ -908,7 +986,8 @@ void loop()
     }
   }
 
-  if (WiFi.status() != WL_CONNECTED && !fallbackAtivo) return;
+  if (WiFi.status() != WL_CONNECTED && !fallbackAtivo)
+    return;
 
   // --- Receber UDP ---
   int packetSize = udp.parsePacket();
@@ -916,7 +995,11 @@ void loop()
   {
     char buffer[256];
     int len = udp.read(buffer, sizeof(buffer) - 1);
-    if (len > 0) { buffer[len] = '\0'; processMessage(buffer); }
+    if (len > 0)
+    {
+      buffer[len] = '\0';
+      processMessage(buffer);
+    }
   }
 
   // --- Discovery + HELLO a cada 15s ---
@@ -946,15 +1029,33 @@ void loop()
   if (now - lastStatusSent > 15000UL)
   {
     sendStatus();
-    if (lastStatusPortaA != 0 && now - lastStatusPortaA > 20000UL) { portaAAberta = false; portaALock = false; }
-    if (lastStatusPortaB != 0 && now - lastStatusPortaB > 20000UL) { portaBAberta = false; portaBLock = false; }
-    Serial.print(F("Minha porta: "));  Serial.println(portaAberta   ? F("ABERTA") : F("FECHADA"));
-    Serial.print(F("PORTA_A: "));      Serial.print(portaAAberta    ? F("ABERTA") : F("FECHADA"));
-    Serial.print(F(" (")); Serial.print(lastStatusPortaA ? now - lastStatusPortaA : 0UL); Serial.println(F("ms)"));
-    Serial.print(F("PORTA_B: "));      Serial.print(portaBAberta    ? F("ABERTA") : F("FECHADA"));
-    Serial.print(F(" (")); Serial.print(lastStatusPortaB ? now - lastStatusPortaB : 0UL); Serial.println(F("ms)"));
-    Serial.print(F("Master: "));       Serial.print(networkMaster); Serial.println(isMaster ? F(" (EU)") : F(""));
-    Serial.print(F("WiFi: "));         Serial.println(wifiMode == WIFI_MODE_NORMAL ? F("NORMAL") : F("FALLBACK"));
+    if (lastStatusPortaA != 0 && now - lastStatusPortaA > 20000UL)
+    {
+      portaAAberta = false;
+      portaALock = false;
+    }
+    if (lastStatusPortaB != 0 && now - lastStatusPortaB > 20000UL)
+    {
+      portaBAberta = false;
+      portaBLock = false;
+    }
+    Serial.print(F("Minha porta: "));
+    Serial.println(portaAberta ? F("ABERTA") : F("FECHADA"));
+    Serial.print(F("PORTA_A: "));
+    Serial.print(portaAAberta ? F("ABERTA") : F("FECHADA"));
+    Serial.print(F(" ("));
+    Serial.print(lastStatusPortaA ? now - lastStatusPortaA : 0UL);
+    Serial.println(F("ms)"));
+    Serial.print(F("PORTA_B: "));
+    Serial.print(portaBAberta ? F("ABERTA") : F("FECHADA"));
+    Serial.print(F(" ("));
+    Serial.print(lastStatusPortaB ? now - lastStatusPortaB : 0UL);
+    Serial.println(F("ms)"));
+    Serial.print(F("Master: "));
+    Serial.print(networkMaster);
+    Serial.println(isMaster ? F(" (EU)") : F(""));
+    Serial.print(F("WiFi: "));
+    Serial.println(wifiMode == WIFI_MODE_NORMAL ? F("NORMAL") : F("FALLBACK"));
     Serial.println(F("-------------------------"));
   }
 
@@ -963,11 +1064,14 @@ void loop()
   {
     if (!deviceEmpty(i) && now - devices[i].lastPing > 30000UL)
     {
-      Serial.print(F("⚠️ Inativo: ")); Serial.println(devices[i].name);
+      Serial.print(F("⚠️ Inativo: "));
+      Serial.println(devices[i].name);
       if (strcmp(devices[i].name, networkMaster) == 0)
       {
         Serial.println(F("⚠️ Master removido por inatividade!"));
-        networkMaster[0] = '\0'; masterPriority = 0; isMaster = false;
+        networkMaster[0] = '\0';
+        masterPriority = 0;
+        isMaster = false;
       }
       deviceClear(i);
     }
@@ -976,25 +1080,31 @@ void loop()
   // --- Botões ---
   if (strcmp(DEVICE_NAME, DEV_PORTEIRO) == 0)
   {
-    static bool lastBtn1 = HIGH; static unsigned long lastBtn1Press = 0;
+    static bool lastBtn1 = HIGH;
+    static unsigned long lastBtn1Press = 0;
     bool btn1 = digitalRead(BTN1_PIN);
     if (btn1 == LOW && lastBtn1 == HIGH && now - lastBtn1Press > 300UL)
     {
       lastBtn1Press = now;
       Serial.println(F("🔘 Botão 1 - PORTA_A"));
-      if (podeAbrir(DEV_PORTA_A)) solicitarAbertura(DEV_PORTA_A);
-      else Serial.println(F("❌ Bloqueado"));
+      if (podeAbrir(DEV_PORTA_A))
+        solicitarAbertura(DEV_PORTA_A);
+      else
+        Serial.println(F("❌ Bloqueado"));
     }
     lastBtn1 = btn1;
 
-    static bool lastBtn2 = HIGH; static unsigned long lastBtn2Press = 0;
+    static bool lastBtn2 = HIGH;
+    static unsigned long lastBtn2Press = 0;
     bool btn2 = digitalRead(BTN2_PIN);
     if (btn2 == LOW && lastBtn2 == HIGH && now - lastBtn2Press > 300UL)
     {
       lastBtn2Press = now;
       Serial.println(F("🔘 Botão 2 - PORTA_B"));
-      if (podeAbrir(DEV_PORTA_B)) solicitarAbertura(DEV_PORTA_B);
-      else Serial.println(F("❌ Bloqueado"));
+      if (podeAbrir(DEV_PORTA_B))
+        solicitarAbertura(DEV_PORTA_B);
+      else
+        Serial.println(F("❌ Bloqueado"));
     }
     lastBtn2 = btn2;
 
@@ -1002,14 +1112,18 @@ void loop()
     static bool lastBypass = false;
     if (bypassState != lastBypass)
     {
-      char bMsg[16]; snprintf(bMsg, sizeof(bMsg), "BYPASS|%s", bypassState ? "ON" : "OFF");
-      sendBroadcast(bMsg); lastBypass = bypassState;
-      Serial.print(F("🔀 Bypass: ")); Serial.println(bypassState ? F("ON") : F("OFF"));
+      char bMsg[16];
+      snprintf(bMsg, sizeof(bMsg), "BYPASS|%s", bypassState ? "ON" : "OFF");
+      sendBroadcast(bMsg);
+      lastBypass = bypassState;
+      Serial.print(F("🔀 Bypass: "));
+      Serial.println(bypassState ? F("ON") : F("OFF"));
     }
   }
   else
   {
-    static bool lastBtn = HIGH; static unsigned long lastPress = 0;
+    static bool lastBtn = HIGH;
+    static unsigned long lastPress = 0;
     bool btnState = digitalRead(BTN1_PIN);
     if (btnState == LOW && lastBtn == HIGH && now - lastPress > 300UL)
     {
@@ -1026,37 +1140,71 @@ void loop()
     portaAberta = sensorLeitura;
     if (portaAberta)
     {
-      portaAbertaTempo = now; alertSent = false;
-      char lockMsg[32]; snprintf(lockMsg, sizeof(lockMsg), "LOCK|%s", DEVICE_NAME); sendBroadcast(lockMsg);
-      if      (strcmp(DEVICE_NAME, DEV_PORTA_A) == 0) { portaAAberta=true;  portaALock=true;  lastStatusPortaA=now; }
-      else if (strcmp(DEVICE_NAME, DEV_PORTA_B) == 0) { portaBAberta=true;  portaBLock=true;  lastStatusPortaB=now; }
+      portaAbertaTempo = now;
+      alertSent = false;
+      char lockMsg[32];
+      snprintf(lockMsg, sizeof(lockMsg), "LOCK|%s", DEVICE_NAME);
+      sendBroadcast(lockMsg);
+      if (strcmp(DEVICE_NAME, DEV_PORTA_A) == 0)
+      {
+        portaAAberta = true;
+        portaALock = true;
+        lastStatusPortaA = now;
+      }
+      else if (strcmp(DEVICE_NAME, DEV_PORTA_B) == 0)
+      {
+        portaBAberta = true;
+        portaBLock = true;
+        lastStatusPortaB = now;
+      }
     }
     else
     {
       portaAbertaTempo = 0;
-      char unlockMsg[32]; snprintf(unlockMsg, sizeof(unlockMsg), "UNLOCK|%s", DEVICE_NAME); sendBroadcast(unlockMsg);
-      if      (strcmp(DEVICE_NAME, DEV_PORTA_A) == 0) { portaAAberta=false; portaALock=false; lastStatusPortaA=now; }
-      else if (strcmp(DEVICE_NAME, DEV_PORTA_B) == 0) { portaBAberta=false; portaBLock=false; lastStatusPortaB=now; }
+      char unlockMsg[32];
+      snprintf(unlockMsg, sizeof(unlockMsg), "UNLOCK|%s", DEVICE_NAME);
+      sendBroadcast(unlockMsg);
+      if (strcmp(DEVICE_NAME, DEV_PORTA_A) == 0)
+      {
+        portaAAberta = false;
+        portaALock = false;
+        lastStatusPortaA = now;
+      }
+      else if (strcmp(DEVICE_NAME, DEV_PORTA_B) == 0)
+      {
+        portaBAberta = false;
+        portaBLock = false;
+        lastStatusPortaB = now;
+      }
     }
-    sendStatus(); lastStatusSent = now;
+    sendStatus();
+    lastStatusSent = now;
     Serial.println(portaAberta ? F("🚪 Sensor: ABERTA") : F("🚪 Sensor: FECHADA"));
   }
 
   // --- Relé timeout ---
   if (relayAtivo && now - relayStart >= RELAY_TIME)
   {
-    digitalWrite(RELAY_PIN, HIGH); digitalWrite(PUPE_PIN, HIGH);
-    relayAtivo = false; Serial.println(F("🔒 Relé desligado."));
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(PUPE_PIN, HIGH);
+    relayAtivo = false;
+    Serial.println(F("🔒 Relé desligado."));
     bool sensorAberto = (digitalRead(SENSOR_PIN) == SENSOR_OPEN);
-    if (portaAberta != sensorAberto) { portaAberta = sensorAberto; sendStatus(); }
+    if (portaAberta != sensorAberto)
+    {
+      portaAberta = sensorAberto;
+      sendStatus();
+    }
   }
 
   // --- Alerta porta aberta demais ---
   if (portaAberta && !alertSent && now - portaAbertaTempo > PORTA_TIMEOUT)
   {
     Serial.println(F("⚠️ Porta aberta por muito tempo!"));
-    char alertMsg[64]; snprintf(alertMsg, sizeof(alertMsg), "ALERT|PORTA_ABERTA|%s", DEVICE_NAME);
-    sendBroadcast(alertMsg); alertSent = true;
+    char alertMsg[64];
+    snprintf(alertMsg, sizeof(alertMsg), "ALERT|PORTA_ABERTA|%s", DEVICE_NAME);
+    sendBroadcast(alertMsg);
+    alertSent = true;
   }
 
   // --- Retry REQ_OPEN ---
@@ -1066,14 +1214,21 @@ void loop()
     {
       reqRetryCount++;
       Serial.print(F("🔁 Retry REQ_OPEN ("));
-      Serial.print(reqRetryCount); Serial.print(F("/")); Serial.print(REQ_MAX_RETRIES); Serial.println(F(")"));
-      char reqMsg[64]; snprintf(reqMsg, sizeof(reqMsg), "REQ_OPEN|%s|%s|%lu", reqPorta, DEVICE_NAME, openToken);
-      sendBroadcast(reqMsg); lastReqSent = now;
+      Serial.print(reqRetryCount);
+      Serial.print(F("/"));
+      Serial.print(REQ_MAX_RETRIES);
+      Serial.println(F(")"));
+      char reqMsg[64];
+      snprintf(reqMsg, sizeof(reqMsg), "REQ_OPEN|%s|%s|%lu", reqPorta, DEVICE_NAME, openToken);
+      sendBroadcast(reqMsg);
+      lastReqSent = now;
     }
     else
     {
       Serial.println(F("⚠️ Sem resposta do master. Desistindo."));
-      aguardandoAutorizacao = false; reqRetryCount = 0; reqPorta[0] = '\0';
+      aguardandoAutorizacao = false;
+      reqRetryCount = 0;
+      reqPorta[0] = '\0';
     }
   }
 
@@ -1081,7 +1236,10 @@ void loop()
   if (masterBusy && now - masterBusyTime > 10000UL)
   {
     Serial.println(F("⚠️ Master busy timeout!"));
-    masterBusy = false; liberarToken(); portaALock = false; portaBLock = false;
+    masterBusy = false;
+    liberarToken();
+    portaALock = false;
+    portaBLock = false;
   }
 
   // --- Eleição de master ---

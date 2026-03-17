@@ -358,7 +358,9 @@ void connectFallbackAsClient()
 
 void sendBroadcast(const char *msg)
 {
-  IPAddress broadcastIP = WiFi.localIP() | ~WiFi.subnetMask();
+  IPAddress broadcastIP = IPAddress(
+    (uint32_t)WiFi.localIP() | ~(uint32_t)WiFi.subnetMask()
+  );
   udp.beginPacket(broadcastIP, UDP_PORT);
   udp.print(msg);
   udp.endPacket();
