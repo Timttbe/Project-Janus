@@ -1,6 +1,6 @@
 # Wires Access Control
 
-![ESP8266](https://img.shields.io/badge/Platform-ESP8266-blue?logo=espressif)
+![Main Device](https://img.shields.io/badge/Platform-ESP8266-blue?logo=espressif)
 ![Framework](https://img.shields.io/badge/Framework-Arduino-teal?logo=arduino)
 ![Version](https://img.shields.io/badge/Firmware-v6.0-informational)
 ![Status](https://img.shields.io/badge/Status-Active-success)
