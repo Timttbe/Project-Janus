@@ -128,6 +128,16 @@ This design means **the interlock never depends on a router**. The router connec
 5. The PORTEIRO connects to the router. The AP stays active — the doors are unaffected.
 6. The router-assigned IP is shown in the dashboard topbar. Use it to access the dashboard from your LAN.
 
+> ⚠️ **Web access warning (HTTP vs HTTPS)**
+>
+> `Do not use HTTPS`, the website will not load!
+> 
+> The system uses `HTTP instead of HTTPS`, because the NodeMCU(ESP8266) has limited memory and processing resources.
+>
+> The implementation of HTTPS requires TLS encryption, certificates and higher use of RAM, which may `cause instability or failures` in the microcontroller.
+>
+> As the system `operates in local network (LAN)`, the use of HTTP is sufficient, it is consumes fewer resources and guarantees better performance and reliability.
+
 ### Resetting router credentials
 
 - **Via dashboard:** open `http://192.168.4.1` → WiFi Local section → **TROCAR REDE**.
