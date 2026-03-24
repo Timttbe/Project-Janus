@@ -1,4 +1,4 @@
-# Wires Access Control
+# Interlock Automation Project
 
 ![Main Device](https://img.shields.io/badge/Platform-ESP8266-blue?logo=espressif)
 ![Framework](https://img.shields.io/badge/Framework-Arduino-teal?logo=arduino)
